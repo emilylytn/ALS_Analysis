@@ -1,0 +1,99 @@
+Moving Window Analysis Procedure for Airborne AERMOD Chemical Exposures (ALS, Ohio)
+
+Keywords: 
+Mortality vs Controls; Population density; Moving Window Analysis; AERMOD; Nulls set to Zero; Ohio; 
+
+Purpose: 
+	This procedure documents the procedure of how to read airborne chemical exposures for cases and controls, calculate their exposures (median, Accumulated, max, and min) over a set number of years prior to their diagnosis year, and run a logistic regression analysis over a moving window set by population density. 
+	By following this procedure, logistic regression results for cases vs controls over many years and based on population density will be produced. 
+
+Software and Tools:
+Python (version 3.11.4)
+Plugins/extensions required:
+Pandas
+Arcpy
+Glob
+iglob
+Numpy 
+Csv
+ArcGIS Pro (version 3.1.2)
+VSCode
+
+Input Data:
+
+Controls: Controls (n = 3,519) were randomly sampled in the population based on the expected demographic distribution of the ALS cases (​​based on US Postal Service CDS). Includes residential history, age, sex, and diagnosis (for the cases) information. All diagnosis years are 2016. 
+
+The controls and their locations come in the form of a shapefile. This shapefile contains attribute data about years, diagnosis year, IDs. For each year of data for a single control, there is a single row of data including the study_ID, location coordinates, year (that they lived at this location), diagnosis year. Age and sex attribute data is contained in a seperate CSV file that must be joined to the correct control ID late in the analysis.
+
+Cases: Mortality cases (n = 695) attributed to ‘motor neuron disease’ using ICD-10 code G12.2 were identified via mortality records in Ohio for the years 2012-2016.
+
+The mortality cases and their locations come in the form of a shapefile. This shapefile contains attribute data about years, diagnosis year, IDs. For each year of data for a single control, there is a single row of data including the study_ID, location coordinates, year (that they lived at this location), diagnosis year. Age and sex attribute data is contained in a seperate CSV file that must be joined to the correct control ID late in the analysis.
+
+
+Environmental Data:
+	AllYears_Rasters_NulltoZero (m1_1 and m2_1)
+	
+
+
+
+Create a folder to hold all of the data and analysis calculations. (i.e. “Exposure_Analysis_N2Z_MediaSeperated”; N2Z= nulls set to zero; MediaSeperated= instead of adding the Media rasters for the environmental inputs, each media is used as an environmental layer themselves)
+Create the following file structure:
+
+[Overall_Analysis_Name]
+[Chemical_Name]
+[Exposure_Readings]
+[Controls]
+[Mortality]
+[Summary_Exposures]
+[Controls]
+[Mortality]
+[Windows_R_Input]
+*Make a folder for each summary statistic; i.e. Pd_Median_Pd_Accum, Pb_Accum_Pd_Accum... etc. *
+[Results_R_Output]
+*Same as above*
+
+Copy a version of the Control and Mortality shapefiles into the correct folders within the [Exposure_Readings] folder. Copying these original case and control shps is necessary because portions of the analysis will directly alter the shapefile attribute table. In order to avoid changing the original case and control data, copies will be made for every different exposure analysis. 
+Use the python script “Extract_Exposure_for_Shp.py” to read the exposures for each location of cases and controls. This code reads a point’s exposure for all raster layers in your gdb and creates a new collum for the exposure value. For each row in the case or control shp, the exposure for all rasters will be read regardless of that row’s “year.”
+	
+import os
+import arcpy
+from arcpy import env
+from arcpy.sa import *
+arcpy.CheckOutExtension("Spatial")
+
+
+# Set the current workspace (your gdb of environmental rasters)
+arcpy.env.workspace = "D:\AERMOD\AllYears_346_347_Sum.gdb"  
+
+
+# set the case folder including all the case files (.shp)
+# This file path name should be a FOLDER that contains .shp files.
+caseFolder = "D:\Exposure_Analyses\ExposureAnalysis_07072023_PbPbC\ExposureReadings\Mortality"
+
+
+# Read all raster layers in current workplace
+rasters = arcpy.ListRasters("*", "all")
+
+
+inRasterList = []
+
+
+for raster in rasters:
+    year = raster.split("_")[1]  #Assuming the file name format is "name_year.shp"
+    rasterName = "Sum_" + year  #Change the string to match the names of your raster files' names
+    fieldName = "pb_" + year  #This is the name of the columns of exposures that will be created
+    inRasterList.append([rasterName, fieldName])
+
+
+for file in os.listdir(caseFolder):
+    if file.endswith(".shp"):
+        CasesSet = caseFolder + "/" + file
+        print(CasesSet)
+        ExtractMultiValuesToPoints(CasesSet,inRasterList,"NONE")
+
+
+
+
+Run Moving_Window_Analysis_AERMOD.py
+Run Logistic regression R script. 
+Use Combining_Resulting_CSVs_WindowAnalysis.py
