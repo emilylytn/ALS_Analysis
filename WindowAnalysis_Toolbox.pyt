@@ -15,7 +15,7 @@ class Toolbox(object):
         self.alias = "toolbox"
 
         # List of tool classes associated with this toolbox
-        self.tools = [Tool1, Tool2, Tool3, Tool5, Tool6, Tool7]
+        self.tools = [Tool1, Tool2, Tool3, Tool5, Tool6, Tool7, Tool8, Tool9]
 
 
 class Tool1(object):
@@ -293,7 +293,7 @@ class Tool3(object):
         outpath_base=parameters[6].valueAsText
         outpath_test=parameters[7].valueAsText
 
-        summary_types = ["median", "sum", "max", "min"]
+        summary_types = ["median", "accum", "max", "min"]
 
         #region Clean chem data (get one chem reading for each row)
         # create a Pandas dataframe (df) that isolates each case's diagnosis year
@@ -374,7 +374,7 @@ class Tool3(object):
                 patient_median_exprs_df.to_csv (outpath, index = False, header = True)
                 arcpy.AddMessage(f"Median: {outpath} csv created")
 
-            elif calc_type =="sum":
+            elif calc_type =="accum":
                 arcpy.AddMessage("Currently summarizing: Accum")
                 #region calculate the median chemical/accumulated popdens exposure over various time frames
                 # functions to loop through the merged df and calculate the median chemical exposure over various time frames
@@ -551,11 +551,11 @@ class Tool5(object):
         control_folder = os.path.join(aaa_folder, "Controls")
         mortality_folder = os.path.join(aaa_folder, "Mortality")
 
-        calc_types = ["median", "sum", "max", "min"]
+        calc_types = ["median", "accum", "max", "min"]
 
         abbreviation = {
             "median": "med",
-            "sum": "accum",
+            "accum": "accum",
             "max": "max",
             "min": "min"
         }
@@ -662,11 +662,10 @@ class Tool5(object):
                     for d in df_window:
                         low_pop = d.iat[0, 2]
                         high_pop = d.iat[49, 2]
-                        filtered_control_df = df_control.loc[df_control[f'accum_pd_expsr_{i}_yrs'] >= low_pop].loc[
-                            df_control[f'accum_pd_expsr_{i}_yrs'] <= high_pop]
+                        filtered_control_df = df_control.loc[df_control[f'accum_pd_expsr_{i}_yrs'] >= low_pop].loc[df_control[f'accum_pd_expsr_{i}_yrs'] <= high_pop]
                         matched_controls_df = filtered_control_df[['study_ID', new_chem_col_name, new_pop_col_name]]
                         d = d.drop(columns=['rank'])
-                        matched_df = pd.concat([d, matched_controls_df])
+                        matched_df = pd.concat([d, matched_controls_df]) 
                         final_wind_df = add_attribute_data(str(attrib_file), matched_df)
 
                         arcpy.AddMessage(f"Exporting {calc_type} results...")
@@ -706,14 +705,14 @@ class Tool5(object):
 class Tool6(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
-        self.label = "MUST FIX R Logistic Regression"
+        self.label = "R Logistic Regression"
         self.description = "Log Regression"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
         """Define parameter definitions"""
         params = [
-            arcpy.Parameter(displayName="Folder containing all window analysis files",
+            arcpy.Parameter(displayName="Folder containing all window analysis files (folder that contains Accum, Max, Min, and Median folders)",
                             name="input_WA_folder",
                             datatype="DEFolder",
                             parameterType="Required",
@@ -726,7 +725,6 @@ class Tool6(object):
                             direction="Input"), 
         ]
         return params
-
 
     def isLicensed(self):
         """Set whether tool is licensed to execute."""
@@ -748,11 +746,9 @@ class Tool6(object):
         input_WA_folder = parameters[0].valueAsText
         output_folder = parameters[1].valueAsText
 
-
         import os
         import pandas as pd
         import statsmodels.api as sm
-        import csv
 
         # Folder name variations
         folder_variations = ["Accum", "Median", "Max", "Min"]
@@ -760,52 +756,56 @@ class Tool6(object):
         # Iterate over each folder variation
         for variation in folder_variations:
             # Set up the working directory
-            input_folder = os.path.join(input_WA_folder, variation)
-            output_folder = os.path.join(output_folder, variation)
+            input_folder = os.path.join(input_WA_folder, variation + "_Log_Output")
+            output_folder_variation = os.path.join(output_folder, variation + "_LogROutput")
 
+            # Create the output folder if it doesn't exist
+            if not os.path.exists(output_folder_variation):
+                os.makedirs(output_folder_variation)
+            
             os.chdir(input_folder)
         
-            # Specify the output folder for results with variation in the folder path
-            output_folder = output_folder
-            
             # Get a list of all CSV files in the specified path
             file_list = [file for file in os.listdir() if file.endswith("LogM.csv")]
             
             for file_name in file_list:
                 # Read CSV file
-                temp_data = pd.read_csv(file_name)
-                temp_data_new = temp_data.iloc[:, 1:]  # Exclude the first column
-                temp_data_new.columns = ["disease"] + list(temp_data_new.columns[1:])
-                
-                # Perform logistic regression
-                temp_regression = sm.Logit(temp_data_new["disease"], temp_data_new.iloc[:, 1:]).fit()
-                
-                # Construct the output file path with "_Results.csv" at the end
-                output_file_path = os.path.join(output_folder, os.path.splitext(file_name)[0] + "_results.csv")
-                
-                # Write basic results to the file
-                df_basic = pd.DataFrame({
-                    "variable": temp_data.columns[1],
-                    "num_sample": len(temp_data),
-                    "call": str(temp_regression.model),
-                    "aic": temp_regression.aic,
-                    "iteration": temp_regression.nit
-                }, index=[0])
+                try:
+                    temp_data = pd.read_csv(file_name)
+                    temp_data_new = temp_data.iloc[:, 1:]  # Exclude the first column
+                    temp_data_new.columns = ["disease"] + list(temp_data_new.columns[1:])
+                    
+                    # Perform logistic regression
+                    temp_regression = sm.Logit(temp_data_new["disease"], temp_data_new.iloc[:, 1:]).fit()
+                    
+                    # Construct the output file path with "_Results.csv" at the end
+                    output_file_path = os.path.join(output_folder_variation, os.path.splitext(file_name)[0] + "_results.csv")
+                    
+                    # Write basic results to the file
+                    df_basic = pd.DataFrame({
+                        "variable": temp_data.columns[1],
+                        "num_sample": len(temp_data),
+                        "call": str(temp_regression.model),
+                        "aic": temp_regression.aic
+                    }, index=[0])
 
-                df_basic.to_csv(output_file_path, sep=",", index=False, header=True, mode='a', line_terminator='\n')
+                    if hasattr(temp_regression, 'nit'):
+                        df_basic["iteration"] = temp_regression.nit
+
+                    df_basic.to_csv(output_file_path, sep=",", index=False, header=True, mode='a', line_terminator='\n')
+                    
+                    # Write coefficient results to the same file
+                    temp_regression_coefficient = temp_regression.summary2().tables[1]
+                    temp_regression_coefficient["oddsRatio"] = temp_regression_coefficient["Coef."].apply(lambda x: round(pow(2, x), 3))
+                    temp_regression_coefficient.to_csv(output_file_path, sep=",", index=True, header=True, mode='a', line_terminator='\n')
                 
-                # Write coefficient results to the same file
-                temp_regression_coefficient = temp_regression.summary2().tables[1]
-                temp_regression_coefficient["oddsRatio"] = temp_regression_coefficient["Coef."].apply(lambda x: round(pow(2, x), 3))
-                temp_regression_coefficient.to_csv(output_file_path, sep=",", index=True, header=True, mode='a', line_terminator='\n')
+                except Exception as e:
+                    arcpy.AddError(f"Error processing file '{file_name}': {str(e)}")
 
-
-                return
-
-        def postExecute(self, parameters):
-            """This method takes place after outputs are processed and
-            added to the display."""
-            return
+    def postExecute(self, parameters):
+        """This method takes place after outputs are processed and
+        added to the display."""
+        return
     
 
 class Tool7(object):
@@ -819,13 +819,13 @@ class Tool7(object):
         """Define parameter definitions"""
         params = [
             arcpy.Parameter(displayName="CSV file containing untouched, unduplicated subject locations",
-                            name="input",
+                            name="input_file",
                             datatype="DEFile",
                             parameterType="Required",
                             direction="Input"),
             
             arcpy.Parameter(displayName="Output CSV file name containing duplicated subject locations",
-                            name="output",
+                            name="output_file",
                             datatype="DEFile",
                             parameterType="Required",
                             direction="Input")
@@ -858,10 +858,10 @@ class Tool7(object):
         import csv
 
         # Read CSV file
-        kidca_hmaprdngs_big = pd.read_csv(input_file)
+        ALS_locs = pd.read_csv(input_file)
 
         # Data wrangling
-        kidca_hmaprdngs_xlong_pat = kidca_hmaprdngs_big.apply(lambda row: pd.DataFrame({
+        ALS_locs_wrang = ALS_locs.apply(lambda row: pd.DataFrame({
             'ID': row['ID'],
             'study_ID': row['study_ID'],
             'ALS_status': row['ALS_status'],
@@ -881,9 +881,293 @@ class Tool7(object):
         }), axis=1)
 
         # Concatenate the list of DataFrames into a single DataFrame
-        kidca_hmaprdngs_xlong_pat = pd.concat(kidca_hmaprdngs_xlong_pat.values, ignore_index=True)
+        ALS_locs_wrang = pd.concat(ALS_locs_wrang.values, ignore_index=True)
 
         # Write to CSV
-        kidca_hmaprdngs_xlong_pat.to_csv(output_file, index=False)
+        ALS_locs_wrang.to_csv(output_file, index=False)
     
+        return
+
+
+class Tool8(object):
+    def __init__(self):
+        """Create test CSV to monitor progress"""
+        self.label = "Create test CSV"
+        self.description = "Thistool creates a CSV output that allows you to see if your window analysis is going smoothly."
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions."""
+        # Define input parameters
+        params = [
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 1 Mortality file",
+                            name="N2Z_M1_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 1 Control file",
+                            name="N2Z_M1_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 2 Mortality file",
+                            name="N2Z_M2_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 2 Control file",
+                            name="N2Z_M2_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),            
+            arcpy.Parameter(displayName="Input Intersect (Orig) M1M2 Mortality file",
+                            name="Orig_M1M2_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Intersect (Orig) M1M2 Control file",
+                            name="Orig_M1M2_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) M1M2 Mortality file",
+                            name="N2Z_M1M2_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) M1M2 Control file",
+                            name="N2Z_M1M2_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+
+            arcpy.Parameter(displayName="Output CSV file Location",
+                            name="output_loc",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Output")
+        ]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed. This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter. This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        # Get input parameters
+        N2Z_M1_Mort_file = parameters[0].valueAsText
+        N2Z_M1_Cont_file = parameters[1].valueAsText
+        N2Z_M2_Mort_file = parameters[2].valueAsText
+        N2Z_M2_Cont_file = parameters[3].valueAsText
+        Orig_M1M2_Mort_file = parameters[4].valueAsText
+        Orig_M1M2_Cont_file = parameters[5].valueAsText
+        N2Z_M1M2_Mort_file = parameters[6].valueAsText
+        N2Z_M1M2_Cont_file = parameters[7].valueAsText
+        output_loc = parameters[8].valueAsText
+        
+
+        import pandas as pd
+        from openpyxl import Workbook
+
+        # Load Mortality and Control Data (N2Z M1)
+        mortality_data = pd.read_csv(N2Z_M1_Mort_file)
+        control_data = pd.read_csv(N2Z_M1_Cont_file)
+
+        # Specify the columns you want to select from each dataset
+        mortality_selected_columns = ['study_ID', 'year', 'expsr_val']
+        control_selected_columns = ['study_ID', 'year', 'expsr_val']
+
+        # Rename the selected columns to make them unique
+        mortality_data_selected = mortality_data[mortality_selected_columns].rename(columns={'expsr_val': 'M1'})
+        control_data_selected = control_data[control_selected_columns].rename(columns={'expsr_val': 'M1'})
+
+        # Add a 'CaseOrControl' column to indicate the source
+        mortality_data_selected['CaseOrControl'] = 1
+        control_data_selected['CaseOrControl'] = 0
+
+
+        # Combine mortality and control data
+        combined_data = pd.concat([mortality_data_selected, control_data_selected])
+
+        combined_data = combined_data[['study_ID', 'CaseOrControl', 'year', 'M1']]
+
+        additional_data_list=[]
+        # Replace 'additional_data_1.csv', 'additional_data_2.csv', etc., with your file paths (N2Z M2)
+        additional_data_files = [N2Z_M2_Mort_file, N2Z_M2_Cont_file]
+        for file_path in additional_data_files:
+            additional_data = pd.read_csv(file_path)
+            additional_data = additional_data[['study_ID', 'year', 'expsr_val']]
+            additional_data = additional_data.rename(columns={'expsr_val': 'M2'})
+            additional_data_list.append(additional_data)
+
+
+        additional_data_combined = pd.concat(additional_data_list)
+
+        # Merge the additional columns into the existing DataFrames using 'Study_ID' and 'Year' as keys
+        combined_data = pd.merge(combined_data, additional_data_combined, on=['study_ID', 'year'], how='left')
+        # Add more merges for additional files as needed
+
+        additional_data_list_2=[]
+        # Replace 'additional_data_1.csv', 'additional_data_2.csv', etc., with your file paths (Orig M1M2)
+        additional_data_files = [Orig_M1M2_Mort_file, Orig_M1M2_Cont_file]
+        for file_path in additional_data_files:
+            additional_data = pd.read_csv(file_path)
+            additional_data = additional_data[['study_ID', 'year', 'expsr_val']]
+            additional_data = additional_data.rename(columns={'expsr_val': 'Intersect(M1+M2)'})
+            additional_data_list_2.append(additional_data)
+
+
+        additional_data_combined_2 = pd.concat(additional_data_list_2)
+
+        combined_data = pd.merge(combined_data, additional_data_combined_2, on=['study_ID', 'year'], how='left')
+
+
+        additional_data_list_3=[]
+        # Replace 'additional_data_1.csv', 'additional_data_2.csv', etc., with your file paths (N2Z M1M2)
+        additional_data_files = [N2Z_M1M2_Mort_file, N2Z_M1M2_Cont_file]
+        for file_path in additional_data_files:
+            additional_data = pd.read_csv(file_path)
+            additional_data = additional_data[['study_ID', 'year', 'expsr_val']]
+            additional_data = additional_data.rename(columns={'expsr_val': 'Union(M1+M2)'})
+            additional_data_list_3.append(additional_data)
+
+
+        additional_data_combined_3 = pd.concat(additional_data_list_3)
+
+        combined_data = pd.merge(combined_data, additional_data_combined_3, on=['study_ID', 'year'], how='left')
+        # Calculate the ratio and add it as a new column
+        combined_data['Ratio (Int/Union)'] = combined_data['Intersect(M1+M2)'] / combined_data['Union(M1+M2)']
+
+        # Sort the combined data by the 'Year' column in descending order (most recent first)
+        combined_data.sort_values(by='year', ascending=False, inplace=True)
+
+        # Create an Excel Writer Object 
+        # Select location you want to export to
+        writer = pd.ExcelWriter(output_loc, engine='openpyxl')
+        writer.book = Workbook()
+
+        # Iterate through years
+        for year in combined_data['year'].unique():
+            # Filter data for the current year
+            year_data = combined_data[combined_data['year'] == year]
+
+            # Create a new sheet for the current year
+            year_data.to_excel(writer, sheet_name=str(year), index=False)
+
+        # Save and close the Excel file
+        writer.save()
+
+
+        # Set messages
+        arcpy.AddMessage(f"Tool executed successfully. Output at {output_loc}.")
+
+        return
+
+class Tool9(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Combine R Results"
+        self.description = "This tool takes a folder of selerate logistic regression outputs from the Window analysis and combines them into one CSV file. This file can them be formatted for result visualizations."
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="Folder containing all R log regression outputs. (parent folder for Intersect_M1M2, Union_M1, Union_M2, and Union_M1M2 folders that contain R result csvs.)",
+                            name="input_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="Overall Output folder for Combined CSVs (subfolders will be created by the tool.)",
+                            name="output_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input")
+        ]
+        return params
+
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+    
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        input_folder = parameters[0].valueAsText
+        output_folder = parameters[1].valueAsText
+        
+        import pandas as pd
+        import os
+
+        # List of variations
+        variations = ["Accum", "Median", "Max", "Min"]
+
+        for IntOrUni_folder in os.listdir(input_folder):
+            input_IntOrUni_Folder = os.path.join(input_folder, IntOrUni_folder)
+            if os.path.isdir(input_IntOrUni_Folder):
+                output_IntOrUni_Folder = os.path.join(output_folder, IntOrUni_folder)
+                if not os.path.exists(output_IntOrUni_Folder):
+                    os.makedirs(output_IntOrUni_Folder)
+
+                # Iterate over each variation
+                for variation in variations:
+                    # Get the folder path for the current variation
+                    variation_folder = os.path.join(input_IntOrUni_Folder, variation + "_LogROutput")
+                    
+                    # Check if the variation folder exists
+                    if os.path.exists(variation_folder):
+                        # Initialize list to store DataFrame for each file
+                        combined_data = []
+
+                        # Iterate over CSV files in the current variation folder
+                        for filename in os.listdir(variation_folder):
+                            if filename.endswith('.csv'):
+                                csv_path = os.path.join(variation_folder, filename)
+                                # Read the CSV file skipping the first two rows
+                                df = pd.read_csv(csv_path, skiprows=2)
+                                # Add a new column with index row names
+                                df['Index_Row'] = df.index
+                                # Move the Index_Row column to the front
+                                df = df[['Index_Row'] + [col for col in df.columns if col != 'Index_Row']]
+                                # Add a new column with the file name
+                                df['File_Name'] = filename
+                                # Append the DataFrame to the list
+                                combined_data.append(df)
+
+                        if combined_data:
+                            # Combine all DataFrames into a single DataFrame
+                            combined_df = pd.concat(combined_data, ignore_index=True)
+
+                            # Save the combined DataFrame to a new CSV file
+                            output_file = os.path.join(output_IntOrUni_Folder, f"{variation}_combined.csv")
+                            combined_df.to_csv(output_file, index=False)
+                            arcpy.AddMessage(f"Combined CSV files for {variation} successfully. Output can be found at {output_file}.")
+                        else:
+                            arcpy.AddMessage(f"No CSV files were processed for {variation}.")
+        
         return
