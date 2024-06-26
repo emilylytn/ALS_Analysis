@@ -1,0 +1,1331 @@
+import os
+import arcpy
+from arcpy import env
+from arcpy.sa import *
+import pandas as pd
+from pathlib import Path
+import numpy as np
+
+
+class Toolbox(object):
+    def __init__(self):
+        """Define the toolbox (the name of the toolbox is the name of the
+        .pyt file)."""
+        self.label = "Toolbox"
+        self.alias = "toolbox"
+
+        # List of tool classes associated with this toolbox
+        self.tools = [Tool1, Tool2, Tool3, Tool5, Tool6, Tool7, Tool8, Tool9, Tool10]
+
+
+class Tool1(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Extract Exposures"
+        self.description = "The Extract Exposures tool reads the exposure for shapefile points across multiple rasters. Exposure values will be added to the original input .shp attribute table." 
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="Environmental Rasters Location (.gdb)",
+                            name="environ",
+                            datatype="DEWorkspace",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="Exposure Points Folder",
+                            name="caseFolder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input"),
+                                        
+            arcpy.Parameter(displayName="Raster Name string segment that contains the year",
+                            name="seg_num",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Input"),   
+
+            arcpy.Parameter(displayName="Raster Name string segment that PRECEEDS year",
+                            name="pre_year",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Input"),    
+
+            arcpy.Parameter(displayName="Raster Name string segment that FOLLOWS year",
+                            name="post_year",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Input"),                   
+        ]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        environ = parameters[0].valueAsText
+        caseFolder = parameters[1].valueAsText
+        seg_num = parameters[2].valueAsText
+        pre_year = parameters[3].valueAsText
+        post_year = parameters[4].valueAsText
+
+        # Set the current workspace (your gdb of environmental rasters)
+        arcpy.env.workspace = environ  
+
+        # Set the case folder including all the case files (.shp)
+        # This file path name should be a FOLDER that contains .shp files.
+        print(caseFolder)
+
+        # Read all raster layers in current workplace
+        rasters = arcpy.ListRasters("*", "all")
+
+        inRasterList = []
+
+        for raster in rasters:
+            year = raster.split("_")[int(seg_num)]  # Assuming the file name format is "name_year.shp"
+            rasterName = pre_year + year + post_year  # Change the string to match the names of your raster files' names
+            fieldName = "pb_" + year  # This is the name of the columns of exposures that will be created
+            inRasterList.append([rasterName, fieldName])
+            arcpy.AddMessage("Current raster name: " + str(rasterName))
+
+        for file in os.listdir(caseFolder):
+            if file.endswith(".shp"):
+                CasesSet = caseFolder + "/" + file
+                print(CasesSet)
+                
+                ExtractMultiValuesToPoints(CasesSet, inRasterList, "NONE")
+
+        return
+
+    def postExecute(self, parameters):
+        """This method takes place after outputs are processed and
+        added to the display."""
+        return
+
+
+class Tool2(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Clean Exposure Data"
+        self.description = "This tool adds an exposure value column for each case/control, extracting the correct year of exposure data for each row in data table. The data also gets cleaned, eliminating duplicates and any years of data that fall outside of a temporal limit. WARNING: This code permenantly changes input .shp"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="Point .shp with all raw exposure readings",
+                            name="fc",
+                            datatype="DEShapeFile",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="First year of Environmental Data",
+                            name="startyr",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Input"),
+                                        
+            arcpy.Parameter(displayName="Last year of Environmental Data",
+                            name="endyr",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Input")
+        ]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        fc = parameters[0].valueAsText
+        startyr = parameters[1].valueAsText
+        endyr = parameters[2].valueAsText
+
+        # In this line, specify the input .shp filepath (point shp appended with all year chemical exposures)
+        # <-----------------USER INPUT
+        # ArcPy
+        # add empty field to be filled correct exposure reading and name it "expsr_val"
+        arcpy.AddField_management(fc, "expsr_val", "FLOAT")
+        # HC
+        # Creating a temporary sub-table that will allow us to match the "year" column with the correct year of exposure data
+        fields = ['study_ID', 'year', 'expsr_val']
+        # appending all the chemical concentration fields to this sub-table without having to list them all out manually
+        # HC
+
+        for year in range(int(startyr), (int(endyr) + 1)):  # <--------USER INPUT
+            fields.append('pb_' + str(year))  # <------------- USER INPUT: range of years(?), specify chemical abbreviation as found in input file attribute field names. -------------->
+
+        # update expsr_val field with correct exposure value for the corresponding year in each row if year >= 2000
+        with arcpy.da.UpdateCursor(fc, fields) as cursor:   # cursor reads through shapefile attribute table row by row
+            for row in cursor:
+                year = row[1]   # isolate column of sub-table with year information
+                if year >= int(startyr):
+                    exposure_field = 'pb_' + str(year)    # <------------- USER INPUT: specify chemical abbreviation as found in input file attribute field names. Same as above. ------------------->
+                    exposure_field_index = fields.index(exposure_field)
+                    exposure = row[exposure_field_index]    # index into column with matching year in column name
+                    row[2] = row[exposure_field_index]
+                    cursor.updateRow(row)       # Add data to exmpty "expsr_val" column
+                elif year < int(startyr):
+                    row[2] = -9999    # If the year of data is beyond our scope, fill the exposure column in with N/A
+                    cursor.updateRow(row)
+        del cursor
+
+        return
+
+    def postExecute(self, parameters):
+        """This method takes place after outputs are processed and
+        added to the display."""
+        return
+
+class Tool3(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Summary Exposure Calculation"
+        self.description = "This tool adds population density 'exposure' data for points. It also calculates Median, Sum,  Max, and Min summary statistics across a set number of timeframes. "
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="Point .shp with all exposure readings",
+                            name="fc",
+                            datatype="DEShapeFile",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="First year of Environmental Data",
+                            name="startyr",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Input"),
+                                        
+            arcpy.Parameter(displayName="Last year of Environmental Data",
+                            name="endyr",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Input"),
+
+            arcpy.Parameter(displayName="Population Density exposures .shp",
+                            name="popd",
+                            datatype="DEShapeFile",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="Number of timeframe years",
+                            name="timeframes_num",
+                            datatype="GPLong",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="Output Folder",
+                            name="output_folder",
+                            datatype="DEWorkspace",
+                            parameterType="Required",
+                            direction="Input"),
+
+            arcpy.Parameter(displayName="Output path (for summary statistic .csv)",
+                            name="outpath_base",
+                            datatype="GPString",
+                            parameterType="Required",
+                            direction="Output"),
+            
+            arcpy.Parameter(displayName="Output path (for TEST.csv)",
+                            name="outpath_test",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Output"),
+
+                            
+        ]
+        return params
+
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        fc=parameters[0].valueAsText
+        startyr=parameters[1].valueAsText
+        endyr=parameters[2].valueAsText
+        popd=parameters[3].valueAsText
+        timeframes_num=parameters[4].valueAsText
+        output_folder=parameters[5].valueAsText
+        outpath_base=parameters[6].valueAsText
+        outpath_test=parameters[7].valueAsText
+
+        summary_types = ["median", "accum", "max", "min"]
+
+        #region Clean chem data (get one chem reading for each row)
+        # create a Pandas dataframe (df) that isolates each case's diagnosis year
+        df_diagnosis = pd.DataFrame(arcpy.da.FeatureClassToNumPyArray(fc, ['study_ID', 'index_year', 'expsr_val']))
+        df_diag = df_diagnosis.replace(-9999, 0)   # Replacing years that have exposure values of -9999 with 0 so they don't interfere with calculations. \n This was deemed appropriate since the majority of area within the AERMOD Chemical layers is not filled within chemical data
+        # arbitraily use median to make sure there is only one record of the index year in this dataframe
+        diagnosis_grouped = df_diag.groupby('study_ID')['index_year'].median()
+        diagnosis_grouped = diagnosis_grouped.reset_index()
+
+        # create df of exposure values for each year per patient
+        df = pd.DataFrame(arcpy.da.FeatureClassToNumPyArray(fc, ['study_ID', 'year', 'expsr_val'], skip_nulls=True))
+        df_yrs_out_of_scope_removed =  df.drop(df[df['year'] <= (int(startyr)-1)].index) # remove study_ids that read -9999 because there were not those raster years. 
+        df_yrs_out_of_scope_removed = df_yrs_out_of_scope_removed.reset_index(drop=True)
+        # df of patient exposure per year set as the median of all location exposures for that year (getting rid of redundant years for each patient)
+        df_2 = df_yrs_out_of_scope_removed.replace(-9999, 0)
+        grouped = df_2.groupby(['study_ID', 'year'])['expsr_val'].mean() # df with multilevel indecies... lvl0=patientID, lvl1=year, data=exposure (for year)
+        # if there are mulitple locations for a single year within a patient's record (i.e. the patient moved once or more wihtin the year), their chemical exposure is averaged between these locations within the year
+        patient_entire_df = grouped.reset_index()
+        patient_entire_df.to_csv (outpath_test, index = False, header = True)
+        #endregion
+
+        #region Clean popdens data (get one popdens reading for each row)
+        # repeat this same process with the Population Density exposure readings
+        # HC
+
+        # create a df of study_IDs, Year, and the population density exposure
+        df_pd = pd.DataFrame(arcpy.da.FeatureClassToNumPyArray(popd, ['study_ID', 'year', 'pd_7x7'], skip_nulls=True))
+        df_yrs_out_of_scope_removed_pd =  df_pd.drop(df_pd[df_pd['year'] <= (int(startyr)-1)].index) # remove rows that read -9999 because there were not those raster years. 
+        df_yrs_out_of_scope_removed_pd = df_yrs_out_of_scope_removed_pd.reset_index(drop=True)
+        # df of patient exposure per year set as the mean of all location exposures for that year (getting rid of redundant years for each patient)
+        df_2_pd = df_yrs_out_of_scope_removed_pd.replace(-9999, 0)
+        grouped_pd = df_2_pd.groupby(['study_ID', 'year'])['pd_7x7'].mean() # df with multilevel indecies... lvl0=patientID, lvl1=year, data=exposure (for year)
+        patient_entire_df_pd = grouped_pd.reset_index()
+        patient_entire_df_pd 
+
+
+        # merge the chemical exposure df and the population density dfs using both the study_ID and year as keys
+        df_merged = pd.merge(patient_entire_df, patient_entire_df_pd, how='outer', left_on=['study_ID','year'], right_on = ['study_ID','year'])
+        print(df_merged)
+        #endregion
+        
+        for calc_type in summary_types:
+            outpath = arcpy.os.path.join(output_folder, f"{outpath_base}_{calc_type}.csv")
+
+            if calc_type == "median":
+                arcpy.AddMessage("Currently summarizing: Median")
+                #region calculate the median chemical/accumulated popdens exposure over various time frames
+                # functions to loop through the merged df and calculate the median chemical exposure over various time frames
+                def find_yrs_prior_median(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID] # create a subframe of a single study_ID's full data
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr] # filter this study_ID's subframe so that is only includes the years within a time frame
+                    med_expsr=filteredbyyear['expsr_val'].median() # take the median of these year's exposure values
+                    return med_expsr # output of fumtion is this median
+
+                # functions to loop through the merged df and calculate the accumulated population density exposure over various time frames
+                def find_yrs_prior_accum_pd(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID]
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr]
+                    pd_expsr=filteredbyyear['pd_7x7'].sum()
+                    return pd_expsr
+
+                # set the number of years you want in your time frames
+                # Run the functions to create a df where each patient has a study ID, index year, and calculated exposures for 0-i years
+                for i in range(int(timeframes_num)+1):
+                    new_col_name = f'med_expsr_{i}_yrs'
+                    diagnosis_grouped[new_col_name] = diagnosis_grouped.apply(lambda x: find_yrs_prior_median(i, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                for k in range(int(timeframes_num)+1):
+                    new_col_name_pd = f'accum_pd_expsr_{k}_yrs'
+                    diagnosis_grouped[new_col_name_pd] = diagnosis_grouped.apply(lambda x: find_yrs_prior_accum_pd(k, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                patient_median_exprs_df = diagnosis_grouped
+                #endregion
+
+                #export the final df as a .csv file (summary statistic)
+                patient_median_exprs_df.to_csv (outpath, index = False, header = True)
+                arcpy.AddMessage(f"Median: {outpath} csv created")
+
+            elif calc_type =="accum":
+                arcpy.AddMessage("Currently summarizing: Accum")
+                #region calculate the median chemical/accumulated popdens exposure over various time frames
+                # functions to loop through the merged df and calculate the median chemical exposure over various time frames
+                def find_yrs_prior_median(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID] # create a subframe of a single study_ID's full data
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr] # filter this study_ID's subframe so that is only includes the years within a time frame
+                    med_expsr=filteredbyyear['expsr_val'].sum() # take the median of these year's exposure values
+                    return med_expsr # output of fumtion is this median
+
+                # functions to loop through the merged df and calculate the accumulated population density exposure over various time frames
+                def find_yrs_prior_accum_pd(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID]
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr]
+                    pd_expsr=filteredbyyear['pd_7x7'].sum()
+                    return pd_expsr
+
+                # set the number of years you want in your time frames
+                # Run the functions to create a df where each patient has a study ID, index year, and calculated exposures for 0-i years
+                for i in range(int(timeframes_num)+1):
+                    new_col_name = f'accum_expsr_{i}_yrs'
+                    diagnosis_grouped[new_col_name] = diagnosis_grouped.apply(lambda x: find_yrs_prior_median(i, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                for k in range(int(timeframes_num)+1):
+                    new_col_name_pd = f'accum_pd_expsr_{k}_yrs'
+                    diagnosis_grouped[new_col_name_pd] = diagnosis_grouped.apply(lambda x: find_yrs_prior_accum_pd(k, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                patient_median_exprs_df = diagnosis_grouped
+                #endregion
+
+                #export the final df as a .csv file (summary statistic)
+                patient_median_exprs_df.to_csv (outpath, index = False, header = True)
+                arcpy.AddMessage(f"Accum: {outpath} csv created")
+                
+
+            elif calc_type == "max":
+                arcpy.AddMessage("Currently summarizing: Max")
+                #region calculate the median chemical/accumulated popdens exposure over various time frames
+                # functions to loop through the merged df and calculate the median chemical exposure over various time frames
+                def find_yrs_prior_median(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID] # create a subframe of a single study_ID's full data
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr] # filter this study_ID's subframe so that is only includes the years within a time frame
+                    med_expsr=filteredbyyear['expsr_val'].max() # take the median of these year's exposure values
+                    return med_expsr # output of fumtion is this median
+
+                # functions to loop through the merged df and calculate the accumulated population density exposure over various time frames
+                def find_yrs_prior_accum_pd(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID]
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr]
+                    pd_expsr=filteredbyyear['pd_7x7'].sum()
+                    return pd_expsr
+
+                for i in range(int(timeframes_num)+1):
+                    new_col_name = f'max_expsr_{i}_yrs'
+                    diagnosis_grouped[new_col_name] = diagnosis_grouped.apply(lambda x: find_yrs_prior_median(i, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                for k in range(int(timeframes_num)+1):
+                    new_col_name_pd = f'accum_pd_expsr_{k}_yrs'
+                    diagnosis_grouped[new_col_name_pd] = diagnosis_grouped.apply(lambda x: find_yrs_prior_accum_pd(k, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                patient_median_exprs_df = diagnosis_grouped
+                #endregion
+
+                #export the final df as a .csv file (summary statistic)
+                patient_median_exprs_df.to_csv (outpath, index = False, header = True)
+                arcpy.AddMessage(f"Max: {outpath} csv created")
+
+            elif calc_type == "min":
+                arcpy.AddMessage("Currently summarizing: Min")
+                #region calculate the median chemical/accumulated popdens exposure over various time frames
+                # functions to loop through the merged df and calculate the median chemical exposure over various time frames
+                def find_yrs_prior_median(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID] # create a subframe of a single study_ID's full data
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr] # filter this study_ID's subframe so that is only includes the years within a time frame
+                    med_expsr=filteredbyyear['expsr_val'].min() # take the median of these year's exposure values
+                    return med_expsr # output of fumtion is this median
+
+                # functions to loop through the merged df and calculate the accumulated population density exposure over various time frames
+                def find_yrs_prior_accum_pd(num_years, patient_all_expsr_df, patient_ID, diagnosis_yr):
+                    earliest_yr = diagnosis_yr - num_years
+                    patient_expsr_subframe= patient_all_expsr_df[patient_all_expsr_df['study_ID']==patient_ID]
+                    filteredbyyear= patient_expsr_subframe[patient_expsr_subframe['year'] >= earliest_yr]
+                    pd_expsr=filteredbyyear['pd_7x7'].sum()
+                    return pd_expsr
+
+                for i in range(int(timeframes_num)+1):
+                    new_col_name = f'min_expsr_{i}_yrs'
+                    diagnosis_grouped[new_col_name] = diagnosis_grouped.apply(lambda x: find_yrs_prior_median(i, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                for k in range(int(timeframes_num)+1):
+                    new_col_name_pd = f'accum_pd_expsr_{k}_yrs'
+                    diagnosis_grouped[new_col_name_pd] = diagnosis_grouped.apply(lambda x: find_yrs_prior_accum_pd(k, df_merged, x['study_ID'], x['index_year']), axis=1)   
+
+                patient_median_exprs_df = diagnosis_grouped
+                #endregion
+
+                #export the final df as a .csv file (summary statistic)
+                patient_median_exprs_df.to_csv (outpath, index = False, header = True)
+                arcpy.AddMessage(f"Min: {outpath} csv created")
+
+                # Run the functions to create a df where each patient
+
+
+
+class Tool5(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Window Analysis and Export"
+        self.description = "This tool takes case and control summary exposure csvs and runs a rolling window analysis on them. Creates both log and non-log transformed export files. Output should be a folder as there will be many csv files."
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="Folder that contains case and control summary folders",
+                            name="aaa_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input"),
+
+            arcpy.Parameter(displayName="Number of timeframe years",
+                            name="timeframes_num2",
+                            datatype="GPLong",
+                            parameterType="Required",
+                            direction="Input"),
+
+            arcpy.Parameter(displayName="Attribute Data File (containing controls and cases)",
+                            name="attrib_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+
+            arcpy.Parameter(displayName="Output folder for Window Analysis files",
+                            name="output_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input"),
+
+        ]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed. This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter. This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+
+        aaa_folder = parameters[0].valueAsText
+        timeframes_num2 = parameters[1].valueAsText
+        attrib_file = parameters[2].valueAsText
+        output_folder = parameters[3].valueAsText
+
+        import os
+        import pandas as pd
+        import numpy as np
+        import glob
+
+        control_folder = os.path.join(aaa_folder, "Controls")
+        mortality_folder = os.path.join(aaa_folder, "Mortality")
+
+        calc_types = ["median", "accum", "max", "min"]
+
+        abbreviation = {
+            "median": "med",
+            "accum": "accum",
+            "max": "max",
+            "min": "min"
+        }
+
+        for calc_type in calc_types:
+            arcpy.AddMessage(f"Processing {calc_type} files...")
+            control_files = glob.glob(os.path.join(control_folder, f"*{calc_type}*.csv"))
+            mortality_files = glob.glob(os.path.join(mortality_folder, f"*{calc_type}*.csv"))
+
+            calc_abb = abbreviation.get(calc_type, calc_type)
+
+            arcpy.AddMessage(f"Expected control files: {control_files}")
+            arcpy.AddMessage(f"Expected mortality files: {mortality_files}")
+
+            existing_control_files = [file_name for file_name in control_files if os.path.exists(
+                os.path.join(control_folder, file_name.replace("\\", "/")))]
+            existing_mortality_files = [file_name for file_name in mortality_files if os.path.exists(
+                os.path.join(mortality_folder, file_name.replace("\\", "/")))]
+
+            if existing_control_files:
+                control_file2 = str(existing_control_files[0])
+            else:
+                arcpy.AddMessage(f"No {calc_type} control files found or there is an error.")
+
+            if existing_mortality_files:
+                mortality_file2 = str(existing_mortality_files[0])
+            else:
+                arcpy.AddMessage(f"No {calc_type} mortality files found or there is an error.")
+
+            if os.path.join(control_folder, control_file2) in control_files and os.path.join(mortality_folder,
+                                                                                              mortality_file2) in mortality_files:
+                arcpy.AddMessage(f"There's a match! {control_file2} and {mortality_file2}")
+                control_path = os.path.join(control_folder, control_file2)
+                arcpy.AddMessage(f"Importing {control_path} into dataframe...")
+                mortality_path = os.path.join(mortality_folder, mortality_file2)
+                arcpy.AddMessage(f"Importing {control_path} into dataframe...")
+
+                df_control = pd.read_csv(control_path)
+                patient_median_exprs_df = pd.read_csv(mortality_path)
+
+                # The rest of your existing code for window analysis goes here
+
+                # region Function: sliding window
+                def sliding_window(iterable, size, overlap=0):
+                    """
+                        >>> list(sliding_window([1, 2, 3, 4], size=2))
+                        [(1, 2), (3, 4)]
+                        >>> list(sliding_window([1, 2, 3], size=2, overlap=1))
+                        [(1, 2), (2, 3)]
+                        >>> list(sliding_window([1, 2, 3, 4, 5], size=3, overlap=1))
+                        [(1, 2, 3), (3, 4, 5)]
+                        >>> list(sliding_window([1, 2, 3, 4], size=3, overlap=1))
+                        [(1, 2, 3), (3, 4)]
+                        >>> list(sliding_window([1, 2, 3, 4], size=10, overlap=8))
+                        [(1, 2, 3, 4)]
+                    """
+                    start = 0
+                    end = size
+                    step = size - overlap
+                    if step <= 0:
+                        ValueError("overlap must be smaller then size")
+                    length = len(iterable)
+                    windows95 = []
+                    while end < length:
+                        output = iterable.iloc[start:end]
+                        windows95.append(output)
+                        start += step
+                        end += step
+                    return windows95
+                # endregion
+
+                # region function: rejoin attribute data
+                """
+                -------------------------------------------------------------
+                Function: Rejoin CDCP and Case data with age and sex data
+                -------------------------------------------------------------
+                """
+
+                def add_attribute_data(attribute_data_file, join_to_data_df):
+
+                    # Read csv files as pandas df
+                    df_attributes = pd.read_csv(attribute_data_file)
+
+                    joined_df = pd.merge(join_to_data_df, df_attributes, on="study_ID", how="inner")
+                    joined_df.insert(0, 'ID', joined_df.index + 1)
+                    joined_df = joined_df.drop(columns=['study_ID'])
+                    final_window_df = joined_df[['ID', 'disease', new_chem_col_name, new_pop_col_name, 'AGE', 'SEX']]
+                    return final_window_df
+                # endregion
+
+                # Loop: For each year, for each case pop dens window, match appropriate control pop dens
+                for i in range(int(timeframes_num2) + 1):
+                    new_df_name = f'{calc_abb}_pb_Accum_pd_{i}_yrs'
+                    new_chem_col_name = f'{calc_abb}_expsr_{i}_yrs'
+                    new_pop_col_name = f'accum_pd_expsr_{i}_yrs'
+                    new_df = patient_median_exprs_df.filter(['study_ID', new_chem_col_name, new_pop_col_name],
+                                                             axis=1)
+                    sorted_df = new_df.sort_values(by=[f'accum_pd_expsr_{i}_yrs'], ascending=True)
+                    sorted_df['rank'] = sorted_df[f'accum_pd_expsr_{i}_yrs'].rank(axis=0, method='first')
+                    df_window = sliding_window(sorted_df, 50, overlap=40)
+
+                    window_count = 50
+
+                    for d in df_window:
+                        low_pop = d.iat[0, 2]
+                        high_pop = d.iat[49, 2]
+                        filtered_control_df = df_control.loc[df_control[f'accum_pd_expsr_{i}_yrs'] >= low_pop].loc[df_control[f'accum_pd_expsr_{i}_yrs'] <= high_pop]
+                        matched_controls_df = filtered_control_df[['study_ID', new_chem_col_name, new_pop_col_name]]
+                        d = d.drop(columns=['rank'])
+                        matched_df = pd.concat([d, matched_controls_df]) 
+                        final_wind_df = add_attribute_data(str(attrib_file), matched_df)
+
+                        arcpy.AddMessage(f"Exporting {calc_type} results...")
+
+                        # Create a folder for each calc_type within the specified parent output folder
+                        calc_type_folder = os.path.join(output_folder, f"{calc_type}_Output")
+                        os.makedirs(calc_type_folder, exist_ok=True)
+                        output_file_name = f'{new_df_name}' + f'_Window{window_count}'
+                        output_file_path = os.path.join(calc_type_folder, output_file_name + ".csv")
+                        final_wind_df.to_csv(output_file_path, index=False, header=True)
+
+                        arcpy.AddMessage(f"Exporting log results for {calc_type}...")
+
+                        # log transformation...
+                        df_orig = final_wind_df
+                        df_log = df_orig.iloc[:, [2]].applymap(lambda x: (x * 1000000))
+                        df_log.columns = 'mil_' + df_log.columns
+                        df_orig.drop(df_orig.iloc[:, [2]], axis=1, inplace=True)
+                        df_orig.insert(2, df_log.columns[0], df_log.iloc[:, [0]])
+                        df_log = df_orig.iloc[:, [2]].applymap(lambda x: np.log10(x + 1))
+                        df_log.columns = 'log_' + df_log.columns
+                        df_orig.drop(df_orig.iloc[:, [2]], axis=1, inplace=True)
+                        df_orig.insert(2, df_log.columns[0], df_log.iloc[:, [0]])
+
+                        log_folder_path = os.path.join(output_folder, "Log")
+                        os.makedirs(log_folder_path, exist_ok=True)
+                        calc_type_log_folder = os.path.join(log_folder_path, f"{calc_type}_Log_Output")
+                        os.makedirs(calc_type_log_folder, exist_ok=True)
+
+                        log_output_file_path = os.path.join(calc_type_log_folder, output_file_name + "_LogM.csv")
+                        df_orig.to_csv(log_output_file_path, index=False, header=True)
+
+                        window_count += 10
+        return
+
+
+class Tool6(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "R Logistic Regression"
+        self.description = "Log Regression"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="Folder containing all window analysis files (folder that contains Accum, Max, Min, and Median folders)",
+                            name="input_WA_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input"), 
+            
+            arcpy.Parameter(displayName="Output folder for all logistic regression files",
+                            name="output_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input"), 
+        ]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        input_WA_folder = parameters[0].valueAsText
+        output_folder = parameters[1].valueAsText
+
+        import os
+        import pandas as pd
+        import statsmodels.api as sm
+
+        # Folder name variations
+        folder_variations = ["Accum", "Median", "Max", "Min"]
+
+        # Iterate over each folder variation
+        for variation in folder_variations:
+            # Set up the working directory
+            input_folder = os.path.join(input_WA_folder, variation + "_Log_Output")
+            output_folder_variation = os.path.join(output_folder, variation + "_LogROutput")
+
+            # Create the output folder if it doesn't exist
+            if not os.path.exists(output_folder_variation):
+                os.makedirs(output_folder_variation)
+            
+            os.chdir(input_folder)
+        
+            # Get a list of all CSV files in the specified path
+            file_list = [file for file in os.listdir() if file.endswith("LogM.csv")]
+            
+            for file_name in file_list:
+                # Read CSV file
+                try:
+                    temp_data = pd.read_csv(file_name)
+                    temp_data_new = temp_data.iloc[:, 1:]  # Exclude the first column
+                    temp_data_new.columns = ["disease"] + list(temp_data_new.columns[1:])
+                    
+                    # Perform logistic regression
+                    temp_regression = sm.Logit(temp_data_new["disease"], temp_data_new.iloc[:, 1:]).fit()
+                    
+                    # Construct the output file path with "_Results.csv" at the end
+                    output_file_path = os.path.join(output_folder_variation, os.path.splitext(file_name)[0] + "_results.csv")
+                    
+                    # Write basic results to the file
+                    df_basic = pd.DataFrame({
+                        "variable": temp_data.columns[1],
+                        "num_sample": len(temp_data),
+                        "call": str(temp_regression.model),
+                        "aic": temp_regression.aic
+                    }, index=[0])
+
+                    if hasattr(temp_regression, 'nit'):
+                        df_basic["iteration"] = temp_regression.nit
+
+                    df_basic.to_csv(output_file_path, sep=",", index=False, header=True, mode='a', line_terminator='\n')
+                    
+                    # Write coefficient results to the same file
+                    temp_regression_coefficient = temp_regression.summary2().tables[1]
+                    temp_regression_coefficient["oddsRatio"] = temp_regression_coefficient["Coef."].apply(lambda x: round(pow(2, x), 3))
+                    # For 95% confidence interval
+                    temp_regression_coefficient['CI_oddsratio_low'] = np.exp(temp_regression_coefficient['Coef.'] - 1.96 * temp_regression_coefficient['Std.Err.'])
+                    temp_regression_coefficient['CI_oddsratio_up'] = np.exp(temp_regression_coefficient['Coef.'] + 1.96 * temp_regression_coefficient['Std.Err.'])
+
+                    # For 99% confidence interval
+                    temp_regression_coefficient['CI_oddsratio_low_2'] = np.exp(temp_regression_coefficient['Coef.'] - 2.58 * temp_regression_coefficient['Std.Err.'])
+                    temp_regression_coefficient['CI_oddsratio_up_2'] = np.exp(temp_regression_coefficient['Coef.'] + 2.58 * temp_regression_coefficient['Std.Err.'])
+
+                    temp_regression_coefficient.to_csv(output_file_path, sep=",", index=True, header=True, mode='a', line_terminator='\n')
+                
+                except Exception as e:
+                    arcpy.AddError(f"Error processing file '{file_name}': {str(e)}")
+
+    def postExecute(self, parameters):
+        """This method takes place after outputs are processed and
+        added to the display."""
+        return
+    
+
+class Tool7(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Subject Location Preparation"
+        self.description = "This tool adds a row of data for each location of each subject for each year"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="CSV file containing untouched, unduplicated subject locations",
+                            name="input_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="Output CSV file name containing duplicated subject locations",
+                            name="output_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input")
+        ]
+        return params
+
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        input_file = parameters[0].valueAsText
+        output_file = parameters[1].valueAsText
+        
+        import pandas as pd
+        import os
+        import csv
+
+        # Read CSV file
+        ALS_locs = pd.read_csv(input_file)
+
+        # Data wrangling
+        ALS_locs_wrang = ALS_locs.apply(lambda row: pd.DataFrame({
+            'ID': row['ID'],
+            'study_ID': row['study_ID'],
+            'ALS_status': row['ALS_status'],
+            'SEX': row['SEX'],
+            'AGE': row['AGE'],
+            'source_type': row['source_type'],
+            'source': row['source'],
+            'seq': row['seq'],
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
+            'yr_addr_end': row['yr_addr_end'],
+            'yr_addr_start': row['yr_addr_start'],
+            'index_year': row['index_year'],
+            'num_yrs_ad': row['num_yrs_ad'],
+            'index_yr_minus15': row['index_minus15'],
+            'year': list(range(row['yr_addr_start'], row['yr_addr_end'] + 1))
+        }), axis=1)
+
+        # Concatenate the list of DataFrames into a single DataFrame
+        ALS_locs_wrang = pd.concat(ALS_locs_wrang.values, ignore_index=True)
+
+        # Write to CSV
+        ALS_locs_wrang.to_csv(output_file, index=False)
+    
+        return
+
+
+class Tool8(object):
+    def __init__(self):
+        """Create test CSV to monitor progress"""
+        self.label = "Create test CSV"
+        self.description = "Thistool creates a CSV output that allows you to see if your window analysis is going smoothly."
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions."""
+        # Define input parameters
+        params = [
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 1 Mortality file",
+                            name="N2Z_M1_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 1 Control file",
+                            name="N2Z_M1_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 2 Mortality file",
+                            name="N2Z_M2_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) Media 2 Control file",
+                            name="N2Z_M2_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),            
+            arcpy.Parameter(displayName="Input Intersect (Orig) M1M2 Mortality file",
+                            name="Orig_M1M2_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Intersect (Orig) M1M2 Control file",
+                            name="Orig_M1M2_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) M1M2 Mortality file",
+                            name="N2Z_M1M2_Mort_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+            arcpy.Parameter(displayName="Input Union (N2Z) M1M2 Control file",
+                            name="N2Z_M1M2_Cont_file",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Input"),
+
+            arcpy.Parameter(displayName="Output CSV file Location",
+                            name="output_loc",
+                            datatype="DEFile",
+                            parameterType="Required",
+                            direction="Output")
+        ]
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed. This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter. This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        # Get input parameters
+        N2Z_M1_Mort_file = parameters[0].valueAsText
+        N2Z_M1_Cont_file = parameters[1].valueAsText
+        N2Z_M2_Mort_file = parameters[2].valueAsText
+        N2Z_M2_Cont_file = parameters[3].valueAsText
+        Orig_M1M2_Mort_file = parameters[4].valueAsText
+        Orig_M1M2_Cont_file = parameters[5].valueAsText
+        N2Z_M1M2_Mort_file = parameters[6].valueAsText
+        N2Z_M1M2_Cont_file = parameters[7].valueAsText
+        output_loc = parameters[8].valueAsText
+        
+
+        import pandas as pd
+        from openpyxl import Workbook
+
+        # Load Mortality and Control Data (N2Z M1)
+        mortality_data = pd.read_csv(N2Z_M1_Mort_file)
+        control_data = pd.read_csv(N2Z_M1_Cont_file)
+
+        # Specify the columns you want to select from each dataset
+        mortality_selected_columns = ['study_ID', 'year', 'expsr_val']
+        control_selected_columns = ['study_ID', 'year', 'expsr_val']
+
+        # Rename the selected columns to make them unique
+        mortality_data_selected = mortality_data[mortality_selected_columns].rename(columns={'expsr_val': 'M1'})
+        control_data_selected = control_data[control_selected_columns].rename(columns={'expsr_val': 'M1'})
+
+        # Add a 'CaseOrControl' column to indicate the source
+        mortality_data_selected['CaseOrControl'] = 1
+        control_data_selected['CaseOrControl'] = 0
+
+
+        # Combine mortality and control data
+        combined_data = pd.concat([mortality_data_selected, control_data_selected])
+
+        combined_data = combined_data[['study_ID', 'CaseOrControl', 'year', 'M1']]
+
+        additional_data_list=[]
+        # Replace 'additional_data_1.csv', 'additional_data_2.csv', etc., with your file paths (N2Z M2)
+        additional_data_files = [N2Z_M2_Mort_file, N2Z_M2_Cont_file]
+        for file_path in additional_data_files:
+            additional_data = pd.read_csv(file_path)
+            additional_data = additional_data[['study_ID', 'year', 'expsr_val']]
+            additional_data = additional_data.rename(columns={'expsr_val': 'M2'})
+            additional_data_list.append(additional_data)
+
+
+        additional_data_combined = pd.concat(additional_data_list)
+
+        # Merge the additional columns into the existing DataFrames using 'Study_ID' and 'Year' as keys
+        combined_data = pd.merge(combined_data, additional_data_combined, on=['study_ID', 'year'], how='left')
+        # Add more merges for additional files as needed
+
+        additional_data_list_2=[]
+        # Replace 'additional_data_1.csv', 'additional_data_2.csv', etc., with your file paths (Orig M1M2)
+        additional_data_files = [Orig_M1M2_Mort_file, Orig_M1M2_Cont_file]
+        for file_path in additional_data_files:
+            additional_data = pd.read_csv(file_path)
+            additional_data = additional_data[['study_ID', 'year', 'expsr_val']]
+            additional_data = additional_data.rename(columns={'expsr_val': 'Intersect(M1+M2)'})
+            additional_data_list_2.append(additional_data)
+
+
+        additional_data_combined_2 = pd.concat(additional_data_list_2)
+
+        combined_data = pd.merge(combined_data, additional_data_combined_2, on=['study_ID', 'year'], how='left')
+
+
+        additional_data_list_3=[]
+        # Replace 'additional_data_1.csv', 'additional_data_2.csv', etc., with your file paths (N2Z M1M2)
+        additional_data_files = [N2Z_M1M2_Mort_file, N2Z_M1M2_Cont_file]
+        for file_path in additional_data_files:
+            additional_data = pd.read_csv(file_path)
+            additional_data = additional_data[['study_ID', 'year', 'expsr_val']]
+            additional_data = additional_data.rename(columns={'expsr_val': 'Union(M1+M2)'})
+            additional_data_list_3.append(additional_data)
+
+
+        additional_data_combined_3 = pd.concat(additional_data_list_3)
+
+        combined_data = pd.merge(combined_data, additional_data_combined_3, on=['study_ID', 'year'], how='left')
+        # Calculate the ratio and add it as a new column
+        combined_data['Ratio (Int/Union)'] = combined_data['Intersect(M1+M2)'] / combined_data['Union(M1+M2)']
+
+        # Sort the combined data by the 'Year' column in descending order (most recent first)
+        combined_data.sort_values(by='year', ascending=False, inplace=True)
+
+        # Create an Excel Writer Object 
+        # Select location you want to export to
+        writer = pd.ExcelWriter(output_loc, engine='openpyxl')
+        writer.book = Workbook()
+
+        # Iterate through years
+        for year in combined_data['year'].unique():
+            # Filter data for the current year
+            year_data = combined_data[combined_data['year'] == year]
+
+            # Create a new sheet for the current year
+            year_data.to_excel(writer, sheet_name=str(year), index=False)
+
+        # Save and close the Excel file
+        writer.save()
+
+
+        # Set messages
+        arcpy.AddMessage(f"Tool executed successfully. Output at {output_loc}.")
+
+        return
+
+class Tool9(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Combine R Results"
+        self.description = "This tool takes a folder of selerate logistic regression outputs from the Window analysis and combines them into one CSV file. This file can them be formatted for result visualizations."
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            arcpy.Parameter(displayName="Folder containing all R log regression outputs. (parent folder for Intersect_M1M2, Union_M1, Union_M2, and Union_M1M2 folders that contain R result csvs.)",
+                            name="input_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input"),
+            
+            arcpy.Parameter(displayName="Overall Output folder for Combined CSVs (subfolders will be created by the tool.)",
+                            name="output_folder",
+                            datatype="DEFolder",
+                            parameterType="Required",
+                            direction="Input")
+        ]
+        return params
+
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+    
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        input_folder = parameters[0].valueAsText
+        output_folder = parameters[1].valueAsText
+        
+        import pandas as pd
+        import os
+
+        # List of variations
+        variations = ["Accum", "Median", "Max", "Min"]
+
+        for IntOrUni_folder in os.listdir(input_folder):
+            input_IntOrUni_Folder = os.path.join(input_folder, IntOrUni_folder)
+            if os.path.isdir(input_IntOrUni_Folder):
+                output_IntOrUni_Folder = os.path.join(output_folder, IntOrUni_folder)
+                if not os.path.exists(output_IntOrUni_Folder):
+                    os.makedirs(output_IntOrUni_Folder)
+
+                # Iterate over each variation
+                for variation in variations:
+                    # Get the folder path for the current variation
+                    variation_folder = os.path.join(input_IntOrUni_Folder, variation + "_LogROutput")
+                    
+                    # Check if the variation folder exists
+                    if os.path.exists(variation_folder):
+                        # Initialize list to store DataFrame for each file
+                        combined_data = []
+
+                        # Iterate over CSV files in the current variation folder
+                        for filename in os.listdir(variation_folder):
+                            if filename.endswith('.csv'):
+                                csv_path = os.path.join(variation_folder, filename)
+                                # Read the CSV file skipping the first two rows
+                                df = pd.read_csv(csv_path, skiprows=2)
+                                # Add a new column with index row names
+                                df['Index_Row'] = df.index
+                                # Move the Index_Row column to the front
+                                df = df[['Index_Row'] + [col for col in df.columns if col != 'Index_Row']]
+                                # Add a new column with the file name
+                                df['File_Name'] = filename
+                                if 'Index_Row' in df.columns:
+                                    df.drop(columns=['Index_Row'], inplace=True)
+
+                                # Append the DataFrame to the list
+                                combined_data.append(df)
+
+                        if combined_data:
+                            # Combine all DataFrames into a single DataFrame
+                            combined_df = pd.concat(combined_data, ignore_index=True)
+
+                            # Save the combined DataFrame to a new CSV file
+                            output_file = os.path.join(output_IntOrUni_Folder, f"{variation}_combined.csv")
+                            combined_df.to_csv(output_file, index=False)
+                            arcpy.AddMessage(f"Combined CSV files for {variation} successfully. Output can be found at {output_file}.")
+                        else:
+                            arcpy.AddMessage(f"No CSV files were processed for {variation}.")
+        
+        return
+    
+class Tool10(object):
+    def __init__(self):
+        """Reformat R Results"""
+        self.label = "Reformat R Results"
+        self.description = "This tool reformats R resutls so that they can be visualized in Microsoft Excel."
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+        params = [
+            # Input folder parameter
+            arcpy.Parameter(
+                displayName="Input Folder",
+                name="input_folder",
+                datatype="DEFolder",
+                parameterType="Required",
+                direction="Input"
+            ),
+            
+            arcpy.Parameter(
+                displayName="Analysis Type (IM1M2, IM1, IM2, or UM1M2)",
+                name="analysis_type",
+                datatype="GPString",
+                parameterType="Required",
+                direction="Input"
+            ),
+
+            # Odds ratio output folder parameter
+            arcpy.Parameter(
+                displayName="Odds Ratio Output Folder",
+                name="odds_ratio_output_folder",
+                datatype="DEFolder",
+                parameterType="Required",
+                direction="Input"
+            ),
+
+            # Significance output folder parameter
+            arcpy.Parameter(
+                displayName="Significance Output Folder",
+                name="significance_output_folder",
+                datatype="DEFolder",
+                parameterType="Required",
+                direction="Input")
+
+        ]
+        return params
+
+    def execute(self, parameters, messages):
+        """Execute the tool"""
+
+        # Get parameter values
+        input_folder = parameters[0].valueAsText
+        analysis_type = parameters[1].valueAsText
+        odds_ratio_output_folder = parameters[2].valueAsText
+        significance_output_folder = parameters[3].valueAsText
+
+        import glob
+        import csv
+        import pandas as pd
+
+
+        # Function to extract window and year information from filename
+        def extract_info(filename):
+            parts = filename.split('_')
+            years = int(parts[4])
+            window = int(parts[6].replace("Window", ""))  # Extracting window number from the filename
+            return years, window
+
+        # Iterate over each file in the input folder
+        for file_path in glob.glob(os.path.join(input_folder, '*.csv')):
+            # Extract the file name without directory part
+            file_name = os.path.basename(file_path)
+            
+            # Extracting the type of data from the file name
+            data_type = file_name.split('_')[0]
+            
+            # Read the data from the Excel file
+            data = pd.read_csv(file_path)
+
+            # Filter rows where the first column starts with "log_mil"
+            log_mil_data = data[data.iloc[:, 0].astype(str).str.startswith("log_mil")]
+
+            # Columns to remove
+            columns_to_remove = ['Coef.', 'Std.Err.', 'z', '[0.025', '0.975]']
+
+            # Remove the specified columns
+            log_mil_data = log_mil_data.drop(columns=columns_to_remove)
+
+            log_mil_data[['Year', 'Window']] = log_mil_data['File_Name'].apply(lambda x: pd.Series(extract_info(x)))
+
+            log_mil_data_sorted = log_mil_data.sort_values(by=['Year', 'Window'], ascending=[False, True])
+
+            odds_ratio_df = log_mil_data_sorted.pivot(index='Window', columns='Year', values='oddsRatio')
+            odds_ratio_df = odds_ratio_df.sort_index(axis=0, ascending=False).sort_index(axis=1, ascending=False)
+
+
+            # Construct the output file name for odds ratio data
+            odds_ratio_output_file_name = f"{analysis_type}_{data_type}_odds_ratio_data.xlsx"
+            odds_ratio_output_file_path = os.path.join(odds_ratio_output_folder, odds_ratio_output_file_name)
+
+            # Save the odds ratio DataFrame to Excel
+            odds_ratio_df.to_excel(odds_ratio_output_file_path, index=True)
+
+            # Iterate over each row and assign value based on significance
+            for index, row in log_mil_data_sorted.iterrows():
+                # Assuming significance if any of the statistical columns is significant (you can customize this based on your criteria)
+                is_significant = (row['CI_oddsratio_low'] > 1) or (row['CI_oddsratio_up'] < 1)
+                # Assign 1 for significant and 0 for non-significant
+                log_mil_data_sorted.at[index, 'Significance'] = 1 if is_significant else 0
+
+            # Reshape the DataFrame with 'Year' as index and 'Window' as columns
+            signif_df = log_mil_data_sorted.pivot(index='Window', columns='Year', values='Significance').fillna(0)
+            signif_df = signif_df.sort_index(axis=0, ascending=False).sort_index(axis=1, ascending=False)
+
+            # Construct the output file name for significance data
+            significance_output_file_name = f"{analysis_type}_{data_type}_significance_data.xlsx"
+            significance_output_file_path = os.path.join(significance_output_folder, significance_output_file_name)
+
+            # Save the significance DataFrame to Excel
+            signif_df.to_excel(significance_output_file_path, index=True)
+
+            # Reshape the DataFrame with 'Year' as index and 'Window' as columns for CI_oddsratio_low
+            ci_low_df = log_mil_data_sorted.pivot(index='Window', columns='Year', values='CI_oddsratio_low').fillna(0)
+            ci_low_df = ci_low_df.sort_index(axis=0, ascending=False).sort_index(axis=1, ascending=False)  # Flip direction of 'Window'
+
+            # Construct the output file name for CI_oddsratio_low data
+            ci_low_output_file_name = f"{analysis_type}_{data_type}_ci_low_data.xlsx"
+            ci_low_output_file_path = os.path.join(significance_output_folder, ci_low_output_file_name)
+
+            # Save the CI_oddsratio_low DataFrame to Excel
+            ci_low_df.to_excel(ci_low_output_file_path, index=True)
+
+            # Reshape the DataFrame with 'Year' as index and 'Window' as columns for CI_oddsratio_up
+            ci_up_df = log_mil_data_sorted.pivot(index='Window', columns='Year', values='CI_oddsratio_up').fillna(0)
+            ci_up_df = ci_up_df.sort_index(axis=0, ascending=False).sort_index(axis=1, ascending=False)  # Flip direction of 'Window'
+
+            # Construct the output file name for CI_oddsratio_up data
+            ci_up_output_file_name = f"{analysis_type}_{data_type}_ci_up_data.xlsx"
+            ci_up_output_file_path = os.path.join(significance_output_folder, ci_up_output_file_name)
+
+            # Save the CI_oddsratio_up DataFrame to Excel
+            ci_up_df.to_excel(ci_up_output_file_path, index=True)
+
+        
+        return
+
